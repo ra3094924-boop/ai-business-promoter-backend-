@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import fetch from "node-fetch"; // ✅ जरूरी package
+import fetch from "node-fetch";
 
 dotenv.config();
 
@@ -17,7 +17,10 @@ app.get("/", (req, res) => {
 // ✅ ChatGPT API route
 app.post("/api/prompt", async (req, res) => {
   const { prompt } = req.body;
-  if (!prompt) return res.status(400).json({ error: "Prompt missing" });
+
+  if (!prompt) {
+    return res.status(400).json({ error: "Prompt missing" });
+  }
 
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -34,18 +37,19 @@ app.post("/api/prompt", async (req, res) => {
 
     const data = await response.json();
 
-    if (!data.choices || !data.choices.length) {
-      return res.status(500).json({ error: "No reply from AI" });
+    if (data.error) {
+      console.error("❌ OpenAI Error:", data.error);
+      return res.json({ reply: `⚠️ AI Error: ${data.error.message}` });
     }
 
-    res.json({ reply: data.choices[0].message.content });
+    const reply = data?.choices?.[0]?.message?.content || "⚠️ No reply received from AI.";
+    res.json({ reply });
   } catch (err) {
     console.error("❌ Server Error:", err);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ reply: "⚠️ Server error, please try again." });
   }
 });
 
+// ✅ Port
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () =>
-  console.log(`✅ Server running successfully on port ${PORT}`)
-);
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
