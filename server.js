@@ -31,7 +31,7 @@ app.post("/api/prompt", async (req, res) => {
         "X-Title": "AI Business Promoter"
       },
       body: JSON.stringify({
-        model: "mistralai/mixtral-8x7b", // ✅ Free + Fast model
+         model: "mistralai/mixtral-8x7b-instruct", // ✅ Free + Fast model
         messages: [{ role: "user", content: prompt }]
       })
     });
