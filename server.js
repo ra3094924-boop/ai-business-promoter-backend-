@@ -87,7 +87,8 @@ app.post("/api/prompt", async (req, res) => {
       response = await callSpecificAPI(apiPreference, enhancePrompt(prompt), creativity);
       usedAPI = apiPreference;
     } else {
-      const apiOrder = ["openrouter", "huggingface", "gemini", "cohere", "openai"];
+      // पहले OpenAI या Gemini से शुरू करो
+const apiOrder = ["openai", "gemini", "cohere", "openrouter", "huggingface"];
       for (const apiName of apiOrder) {
         try {
           if (!API_CONFIG[apiName].key) continue;
