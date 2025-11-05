@@ -1,4 +1,4 @@
-// ✅ PROMOTIONAI - FINAL OPTIMIZED BACKEND (All Features Included)
+// ✅ PROMOTIONAI - FINAL ADVANCED BACKEND (All Features Included)
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -53,46 +53,81 @@ app.get("/", (req, res) => {
   });
 });
 
-// ✅ Smart Prompt Enhancer
-function enhancePrompt(userPrompt) {
+// ✅ Auto Timeout Helper
+async function withTimeout(promise, ms, apiName) {
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`${apiName} took too long`)), ms)
+  );
+  return Promise.race([promise, timeout]);
+}
+
+// ✅ Smart Prompt Builder (Template + Default Mode)
+function buildPrompt(prompt, template) {
+  // अगर केवल नंबर या calculation दिया गया है, तो direct answer दो (no AI call)
+  if (/^[0-9+\-*/().\s]+$/.test(prompt)) {
+    try {
+      // eslint-disable-next-line no-eval
+      const result = eval(prompt);
+      return `The result of ${prompt} is ${result}`;
+    } catch {
+      return `Invalid math expression: ${prompt}`;
+    }
+  }
+
+  // अगर Template चुना गया है
+  if (template && template.trim() !== "" && template !== "default") {
+    return `
+You are a professional marketing copywriter.
+Create a high-quality, ready-to-post ${template} based on the user's input.
+
+🧠 Input: ${prompt}
+
+🎯 Requirements:
+- Write a complete ${template} (not instructions)
+- Make it engaging, creative and easy to read
+- Add emojis and hashtags naturally if suitable
+- Return only the final ${template} text (no explanations)
+    `;
+  }
+
+  // Default Answer Mode
   return `
-You are an expert marketing content writer.
-Generate a fully written, ready-to-post business or social media content.
+You are a helpful creative AI writer.
+Generate a natural, well-written and complete answer for this prompt.
 
-🧠 Input: ${userPrompt}
+🧠 Input: ${prompt}
 
-🎯 Output Requirements:
-- Write complete content (not instructions).
-- Use a ${Math.random() > 0.5 ? "natural and friendly" : "professional and creative"} tone.
-- Include emojis and hashtags when relevant.
-- Keep the flow engaging, with clear call to action if suitable.
-- Do NOT repeat instructions or mention tones/templates.
-Return only the final content.
-`;
+🎯 Requirements:
+- Write in a clear and friendly way
+- If it's a question, answer it directly
+- If it's a statement, expand it meaningfully
+- Return plain text (no extra instructions)
+    `;
 }
 
 // ✅ Main Prompt Endpoint
 app.post("/api/prompt", async (req, res) => {
-  const { prompt, apiPreference = "auto", creativity = 70 } = req.body;
+  const { prompt, apiPreference = "auto", creativity = 70, template = "default" } = req.body;
   if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-  // 🔄 Wake up Render (avoid long load)
+  // 🔄 Wake up Render
   fetch("https://ai-business-promoter-backend.onrender.com/").catch(() => {});
 
   try {
     let response;
     let usedAPI = "";
 
+    const finalPrompt = buildPrompt(prompt, template);
+
     if (apiPreference !== "auto" && API_CONFIG[apiPreference]) {
-      response = await callSpecificAPI(apiPreference, enhancePrompt(prompt), creativity);
+      response = await callSpecificAPI(apiPreference, finalPrompt, creativity);
       usedAPI = apiPreference;
     } else {
-      // पहले OpenAI या Gemini से शुरू करो
-const apiOrder = ["openai", "gemini", "cohere", "openrouter", "huggingface"];
+      const apiOrder = ["openai", "gemini", "cohere", "openrouter", "huggingface"];
       for (const apiName of apiOrder) {
         try {
           if (!API_CONFIG[apiName].key) continue;
-          response = await callSpecificAPI(apiName, enhancePrompt(prompt), creativity);
+          response = await callSpecificAPI(apiName, finalPrompt, creativity);
           usedAPI = apiName;
           break;
         } catch (err) {
@@ -139,19 +174,25 @@ app.post("/api/image", async (req, res) => {
   }
 });
 
-// ✅ API Handler
+// ✅ API Call Handler (with Timeout)
 async function callSpecificAPI(apiName, prompt, creativity = 70) {
   switch (apiName) {
-    case "openrouter": return await callOpenRouter(prompt, creativity);
-    case "huggingface": return await callHuggingFace(prompt);
-    case "gemini": return await callGemini(prompt);
-    case "cohere": return await callCohere(prompt, creativity);
-    case "openai": return await callOpenAI(prompt, creativity);
-    default: throw new Error(`Unknown API: ${apiName}`);
+    case "openai":
+      return await withTimeout(callOpenAI(prompt, creativity), 7000, "OpenAI");
+    case "gemini":
+      return await withTimeout(callGemini(prompt), 7000, "Gemini");
+    case "cohere":
+      return await withTimeout(callCohere(prompt, creativity), 7000, "Cohere");
+    case "openrouter":
+      return await withTimeout(callOpenRouter(prompt, creativity), 7000, "OpenRouter");
+    case "huggingface":
+      return await withTimeout(callHuggingFace(prompt), 7000, "HuggingFace");
+    default:
+      throw new Error(`Unknown API: ${apiName}`);
   }
 }
 
-// 🌐 1. OpenRouter
+// 🌐 OpenRouter
 async function callOpenRouter(prompt, creativity) {
   const res = await fetch(API_CONFIG.openrouter.url, {
     method: "POST",
@@ -167,7 +208,7 @@ async function callOpenRouter(prompt, creativity) {
   return data.choices?.[0]?.message?.content || "No response from OpenRouter";
 }
 
-// 🌐 2. Hugging Face
+// 🌐 HuggingFace
 async function callHuggingFace(prompt) {
   const res = await fetch(API_CONFIG.huggingface.url, {
     method: "POST",
@@ -178,7 +219,7 @@ async function callHuggingFace(prompt) {
   return data[0]?.generated_text || "No response from HuggingFace";
 }
 
-// 🌐 3. Gemini
+// 🌐 Gemini
 async function callGemini(prompt) {
   const url = `${API_CONFIG.gemini.url}?key=${API_CONFIG.gemini.key}`;
   const res = await fetch(url, {
@@ -190,7 +231,7 @@ async function callGemini(prompt) {
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response from Gemini";
 }
 
-// 🌐 4. Cohere
+// 🌐 Cohere
 async function callCohere(prompt, creativity) {
   const res = await fetch(API_CONFIG.cohere.url, {
     method: "POST",
@@ -201,7 +242,7 @@ async function callCohere(prompt, creativity) {
   return data.generations?.[0]?.text || "No response from Cohere";
 }
 
-// 🌐 5. OpenAI
+// 🌐 OpenAI
 async function callOpenAI(prompt, creativity) {
   const res = await fetch(API_CONFIG.openai.url, {
     method: "POST",
