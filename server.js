@@ -29,24 +29,19 @@ function buildToolPrompt(tool, text) {
   }
 }
 
-// 🧩 Main route
+// 🧩 Main route - Text Generation
 app.post("/api/prompt", async (req, res) => {
   const { prompt, tone, length, businessType, template, creativity, action, tool } = req.body;
-
-  if (!prompt) {
-    return res.status(400).json({ error: "Missing prompt" });
-  }
+  if (!prompt) return res.status(400).json({ error: "Missing prompt" });
 
   let finalPrompt = "";
-  let maxTokens = 600; // default for main
+  let maxTokens = 600;
 
-  // 🧠 Detect if it's a "tool" request
   if (action === "tool" || template === "tool" || tool) {
     const shortPrompt = buildToolPrompt(tool || "general", prompt);
     finalPrompt = shortPrompt;
     maxTokens = 250;
   } else {
-    // Normal full content generation
     finalPrompt = `
 🎯 Template: ${template || "Custom"}
 🏢 Business Type: ${businessType || "General"}
@@ -74,8 +69,7 @@ app.post("/api/prompt", async (req, res) => {
     });
 
     const data = await response.json();
-    const output =
-      data?.choices?.[0]?.message?.content?.trim() || "No output received from model.";
+    const output = data?.choices?.[0]?.message?.content?.trim() || "No output received from model.";
     res.json({ output });
   } catch (error) {
     console.error("AI Error:", error.message);
@@ -83,40 +77,46 @@ app.post("/api/prompt", async (req, res) => {
   }
 });
 
-// 🎨 Real AI Image Generation using OpenRouter (DALL·E-like)
+// 🎨 Smart AI Image Generation (Auto Fallback)
 app.post("/api/image", async (req, res) => {
   const { prompt, style } = req.body;
   if (!prompt) return res.status(400).send("No image prompt provided.");
 
-  try {
-    const response = await fetch("https://openrouter.ai/api/v1/images/generations", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "openai/dall-e-3",   // 🔥 high-quality AI image model
-        prompt: `${prompt}\nStyle: ${style}`,
-        size: "1024x1024",
-        n: 1,
-      }),
-    });
+  const models = ["openai/dall-e-3", "stabilityai/stable-diffusion-xl"];
+  let images = [];
 
-    const data = await response.json();
-    const images = data?.data?.map(img => img.url).filter(Boolean) || [];
+  for (const model of models) {
+    try {
+      console.log(`🖼️ Trying model: ${model}`);
+      const response = await fetch("https://openrouter.ai/api/v1/images/generations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model,
+          prompt: `${prompt}. Style: ${style}. High-quality, detailed, professional marketing design.`,
+          size: "1024x1024",
+          n: 1,
+        }),
+      });
 
-    if (!images.length) throw new Error("No image URLs returned from OpenRouter.");
-
-    res.json({ images });
-  } catch (err) {
-    console.error("Image generation failed:", err.message);
-    // fallback placeholder (safe)
-    const safeUrl = `https://placehold.co/512x512?text=${encodeURIComponent(
-      prompt.slice(0, 40)
-    )}`;
-    res.json({ images: [safeUrl] });
+      const data = await response.json();
+      images = data?.data?.map((img) => img.url).filter(Boolean) || [];
+      if (images.length > 0) break; // ✅ success — no need to try next
+    } catch (err) {
+      console.error(`⚠️ ${model} failed:`, err.message);
+    }
   }
+
+  if (images.length === 0) {
+    const fallback = `https://placehold.co/512x512?text=${encodeURIComponent(prompt)}`;
+    console.warn("⚠️ Fallback placeholder used");
+    images = [fallback];
+  }
+
+  res.json({ images });
 });
 
 // 🚀 Start Server
