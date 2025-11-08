@@ -1,27 +1,8 @@
 {
-  "food_ad": [
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382738/food1.jpg",
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382752/food2.jpg",
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382788/food3.jpg"
-  ],
-  "fashion_ad": [
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382801/fashion1.jpg",
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382822/fashion2.jpg"
-  ],
-  "business_ad": [
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382845/business1.jpg",
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382856/business2.jpg"
-  ],
-  "instagram_post": [
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382866/insta1.jpg",
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382880/insta2.jpg"
-  ],
-  "technology_ad": [
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382893/tech1.jpg",
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382902/tech2.jpg"
+  "festival_offer": [
+    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1762588536/pexels-barbara-hartmann-fara-2155709396-34595763_hltxak.jpg"
   ],
   "general": [
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382912/default1.jpg",
-    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1730382921/default2.jpg"
+    "https://res.cloudinary.com/dvldpiwzb/image/upload/v1762588536/pexels-barbara-hartmann-fara-2155709396-34595763_hltxak.jpg"
   ]
 }
