@@ -1,9 +1,10 @@
-// ✅ PromotionAI - Smart Backend (AI Text + Cloudinary Gallery + Old Features)
+// ✅ PromotionAI - Smart Backend (AI Text + Cloudinary Gallery + Razorpay Payment)
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
 import fs from "fs";
 import dotenv from "dotenv";
+import Razorpay from "razorpay";
 
 dotenv.config();
 
@@ -41,12 +42,10 @@ app.post("/api/prompt", async (req, res) => {
   let finalPrompt = "";
   let maxTokens = 600;
 
-  // 🧩 For tools like rephrase / translate / shorten
   if (action === "tool" || template === "tool" || tool) {
     finalPrompt = buildToolPrompt(tool || "general", prompt);
     maxTokens = 250;
   } else {
-    // 🧠 Full creative generation
     finalPrompt = `
 🎯 Template: ${template || "Custom"}
 🏢 Business Type: ${businessType || "General"}
@@ -74,8 +73,7 @@ app.post("/api/prompt", async (req, res) => {
     });
 
     const data = await response.json();
-    const output =
-      data?.choices?.[0]?.message?.content?.trim() || "No output received from AI.";
+    const output = data?.choices?.[0]?.message?.content?.trim() || "No output received from AI.";
     res.json({ output });
   } catch (error) {
     console.error("AI Error:", error.message);
@@ -91,7 +89,6 @@ app.post("/api/image", async (req, res) => {
   try {
     const galleryData = JSON.parse(fs.readFileSync(GALLERY_PATH, "utf-8"));
     const category = (template || "general").toLowerCase();
-
     const images = galleryData[category] || galleryData["general"] || [];
 
     if (images.length > 0) {
@@ -100,44 +97,46 @@ app.post("/api/image", async (req, res) => {
     } else {
       return res.json({
         images: [`https://placehold.co/512x512?text=${encodeURIComponent(prompt)}`],
-        source: "placeholder"
+        source: "placeholder",
       });
     }
   } catch (err) {
     console.error("Gallery error:", err.message);
     return res.json({
       images: [`https://placehold.co/512x512?text=${encodeURIComponent(prompt)}`],
-      source: "fallback"
+      source: "fallback",
     });
   }
 });
 
-// ✅ Razorpay Payment Integration
-import Razorpay from "razorpay";
-
+// 💰 RAZORPAY PAYMENT INTEGRATION
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
 // ✅ Create Order API (for frontend)
 app.post("/api/create-order", async (req, res) => {
   const options = {
-    amount: 9900, // ₹99 = 9900 paise
+    amount: 9900, // ₹99 = 99 INR * 100
     currency: "INR",
     receipt: `order_rcptid_${Date.now()}`,
   };
+
   try {
     const order = await razorpay.orders.create(options);
-    res.json(order);
+    console.log("✅ Razorpay order created:", order.id);
+    res.status(200).json(order);
   } catch (error) {
-    console.error("❌ Order creation failed:", error);
-    res.status(500).send({ error: "Order creation failed" });
+    console.error("❌ Razorpay order creation failed:", error.message);
+    res.status(500).json({ error: "Order creation failed", details: error.message });
   }
 });
 
-
-
+// 🩺 Health Check Route (For Render test)
+app.get("/", (req, res) => {
+  res.send("✅ PromotionAI backend is live and running perfectly!");
+});
 
 // 🚀 START SERVER (PORT 5000)
 const PORT = process.env.PORT || 5000;
