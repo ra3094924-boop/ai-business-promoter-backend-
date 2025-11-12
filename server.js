@@ -115,7 +115,7 @@ app.post("/api/image", async (req, res) => {
    ✅ Works with Free + Premium + Refer System + Old Wallet
    =========================================================== */
 
-import fetch from "node-fetch";
+
 import admin from "firebase-admin";
 
 // 🔹 Initialize Firebase Admin (use your existing credentials)
