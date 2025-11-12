@@ -116,7 +116,6 @@ app.post("/api/image", async (req, res) => {
    =========================================================== */
 
 
-import admin from "firebase-admin";
 
 // 🔹 Initialize Firebase Admin (use your existing credentials)
 if (!admin.apps.length) {
