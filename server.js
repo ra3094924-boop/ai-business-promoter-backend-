@@ -1,188 +1,214 @@
-// ✅ PromotionAI - Smart Backend (AI Text + Cloudinary Gallery + Razorpay Payment)
+// server.js
+// PromotionAI — Full backend: AI text (tools + templates), image gallery, Razorpay, Firebase Admin (ENV), update-user API
+
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
 import fs from "fs";
 import dotenv from "dotenv";
 import Razorpay from "razorpay";
-
-// 🔥 NEW: Firebase Admin
 import admin from "firebase-admin";
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "4mb" }));
 
-// 🔑 API Keys & Model
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const MODEL = process.env.OPENROUTER_MODEL || "gpt-4o-mini";
-const GALLERY_PATH = new URL("./gallery_manifest.json", import.meta.url).pathname;
+// -------------------- Config / Env --------------------
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "gpt-4o-mini";
+const GALLERY_PATH = process.env.GALLERY_PATH || new URL("./gallery_manifest.json", import.meta.url).pathname;
+const PORT = process.env.PORT || 5000;
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
 
-// ===============================================
-// 🔥 NEW: Firebase Admin Setup
-// ===============================================
-if (!admin.apps.length) {
-  try {
-    const serviceAccount = JSON.parse(fs.readFileSync("./serviceAccount.json"));
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-    console.log("🔥 Firebase Admin Connected");
-  } catch (err) {
-    console.log("❌ Firebase Admin Error:", err.message);
+// -------------------- Firebase Admin init (from ENV) --------------------
+let firestore = null;
+try {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    const cfg = typeof process.env.FIREBASE_SERVICE_ACCOUNT_JSON === "string"
+      ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
+      : process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert(cfg),
+      });
+      console.log("🔥 Firebase Admin initialized from ENV");
+    }
+    firestore = admin.firestore();
+  } else {
+    console.warn("⚠️ FIREBASE_SERVICE_ACCOUNT_JSON not set — Firestore features will fail until set.");
+  }
+} catch (err) {
+  console.error("❌ Firebase Admin Init Error:", err && err.message ? err.message : err);
+}
+
+// -------------------- Helper: tool prompts --------------------
+function buildToolPrompt(tool, text) {
+  switch ((tool || "").toLowerCase()) {
+    case "rephrase":
+      return `Rephrase this marketing copy to be more engaging and concise. Preserve meaning:\n\n${text}`;
+    case "translate_hinglish":
+      return `Translate the following into Hinglish (Hindi in Latin script) while keeping meaning and tone:\n\n${text}`;
+    case "hashtags":
+      return `Extract up to 10 short relevant marketing hashtags (comma separated, no #) from:\n\n${text}`;
+    case "shorten":
+      return `Shorten this content to a social media caption <= 25 words:\n\n${text}`;
+    case "expand":
+      return `Expand this marketing text with details and benefits. Keep it persuasive:\n\n${text}`;
+    default:
+      return text;
   }
 }
 
-const firestore = admin.firestore();
+// -------------------- Utility: call OpenRouter --------------------
+async function callOpenRouter(finalPrompt, maxTokens = 600) {
+  if (!OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY not configured");
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: OPENROUTER_MODEL,
+      messages: [{ role: "user", content: finalPrompt }],
+      max_tokens: maxTokens,
+    }),
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`OpenRouter error: ${res.status} ${txt}`);
+  }
+  const json = await res.json();
+  const output = json?.choices?.[0]?.message?.content;
+  return output || "";
+}
 
-
-// ===========================================================
-// ✍️ TEXT GENERATION (Same as before — untouched)
-// ===========================================================
+// -------------------- API: main prompt (templates + tools) --------------------
 app.post("/api/prompt", async (req, res) => {
-  const { prompt, tone, length, businessType, template, creativity, action, tool } = req.body;
+  try {
+    const { prompt, tool, template, tone, length, businessType, creativity, action } = req.body;
+    if (!prompt && !tool) return res.status(400).json({ error: "Missing prompt" });
 
-  if (!prompt) return res.status(400).json({ error: "Missing prompt" });
-
-  // Smart tool-based prompt builder
-  const buildToolPrompt = (tool, text) => {
-    switch (tool) {
-      case "rephrase": return `Rephrase this text professionally:\n\n${text}`;
-      case "translate_hinglish": return `Translate to Hinglish:\n\n${text}`;
-      case "hashtags": return `Extract 10 hashtags:\n\n${text}`;
-      case "shorten": return `Shorten to 25 words:\n\n${text}`;
-      default: return `${tool}: ${text}`;
+    // tool mode — quick tasks (hashtags, rephrase, shorten, translate_hinglish, expand)
+    if (action === "tool" || tool) {
+      const tp = buildToolPrompt(tool, prompt);
+      const maxTokens = 250;
+      const out = await callOpenRouter(tp, maxTokens);
+      return res.json({ output: out });
     }
-  };
 
-  let finalPrompt = "";
-  let maxTokens = 600;
-
-  if (action === "tool" || tool) {
-    finalPrompt = buildToolPrompt(tool, prompt);
-    maxTokens = 250;
-  } else {
-    finalPrompt = `
-Template: ${template || "Custom"}
-Business: ${businessType || "General"}
-Tone: ${tone || "Casual"}
-Length: ${length || "Medium"}
-Creativity: ${creativity || 70}
-User Request:
+    // full template mode
+    const finalPrompt = `
+🎯 Template: ${template || "Custom"}
+🏢 Business Type: ${businessType || "General"}
+💬 Tone: ${tone || "Casual"}
+📏 Length: ${length || "Medium"}
+🌈 Creativity: ${creativity || 70}%
+🧠 User Prompt:
 ${prompt}
+
+➡️ Generate creative, brand-relevant marketing content. Provide short caption, 3 hashtags (with #), and a longer description. Keep output readable and separated with headings.
 `;
-  }
-
-  try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [{ role: "user", content: finalPrompt }],
-        max_tokens: maxTokens,
-      }),
-    });
-
-    const data = await response.json();
-    const output = data?.choices?.[0]?.message?.content?.trim() || "No response.";
-
-    res.json({ output });
-  } catch (error) {
-    res.status(500).json({ error: "AI request failed", details: error.message });
+    const out = await callOpenRouter(finalPrompt, 800);
+    res.json({ output: out });
+  } catch (err) {
+    console.error("Prompt error:", err && err.message ? err.message : err);
+    res.status(500).json({ error: "Prompt failed", details: err.message });
   }
 });
 
-
-// ===========================================================
-// 🖼️ IMAGE API (Same as before — untouched)
-// ===========================================================
+// -------------------- API: image (gallery fallback) --------------------
 app.post("/api/image", async (req, res) => {
-  const { prompt, template } = req.body;
-  if (!prompt) return res.status(400).send("No image prompt provided.");
-
   try {
-    const galleryData = JSON.parse(fs.readFileSync(GALLERY_PATH, "utf-8"));
-    const category = (template || "general").toLowerCase();
-    const images = galleryData[category] || galleryData["general"] || [];
+    const { prompt, template } = req.body;
+    if (!prompt) return res.status(400).json({ error: "No prompt" });
 
-    if (images.length > 0) {
-      const randomImage = images[Math.floor(Math.random() * images.length)];
-      return res.json({ images: [randomImage], source: "cloudinary" });
+    // try to return images from gallery_manifest.json if present
+    try {
+      const raw = fs.readFileSync(GALLERY_PATH, "utf-8");
+      const gallery = JSON.parse(raw || "{}");
+      const cat = (template || "general").toLowerCase();
+      const arr = gallery[cat] || gallery["general"] || [];
+      if (arr.length > 0) {
+        const chosen = arr[Math.floor(Math.random() * arr.length)];
+        return res.json({ images: [chosen], source: "gallery" });
+      }
+    } catch (e) {
+      // ignore: use placeholder fallback
     }
 
-    return res.json({
-      images: [`https://placehold.co/512x512?text=${encodeURIComponent(prompt)}`],
-      source: "placeholder",
-    });
-
+    // fallback: placeholder image service
+    const placeholder = `https://placehold.co/1024x1024?text=${encodeURIComponent(prompt)}`;
+    res.json({ images: [placeholder], source: "placeholder" });
   } catch (err) {
-    return res.json({
-      images: [`https://placehold.co/512x512?text=${encodeURIComponent(prompt)}`],
-      source: "fallback",
-    });
+    console.error("Image API error:", err && err.message ? err.message : err);
+    res.status(500).json({ error: "Image failed", details: err.message });
   }
 });
 
-
-// ===========================================================
-// 💰 Razorpay (Same as before — untouched)
-// ===========================================================
+// -------------------- Razorpay: create order --------------------
 const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
+  key_id: RAZORPAY_KEY_ID,
+  key_secret: RAZORPAY_KEY_SECRET,
 });
 
 app.post("/api/create-order", async (req, res) => {
   try {
-    const order = await razorpay.orders.create({
-      amount: 9900,
+    const { amount } = req.body; // amount in paise recommended
+    const opts = {
+      amount: amount || 9900,
       currency: "INR",
-      receipt: "order_" + Date.now(),
-    });
+      receipt: `order_rcptid_${Date.now()}`,
+    };
+    const order = await razorpay.orders.create(opts);
     res.json(order);
-  } catch (error) {
-    res.status(500).json({ error: "Order creation failed" });
+  } catch (err) {
+    console.error("Razorpay create order error:", err && err.message ? err.message : err);
+    res.status(500).json({ error: "Order creation failed", details: err.message });
   }
 });
 
-
-// ===========================================================
-// ⭐ NEW: FIREBASE USER AUTO-UPDATE API
-// ===========================================================
+// -------------------- Firebase: update-user API --------------------
 app.post("/api/update-user", async (req, res) => {
   try {
-    const { uid, data } = req.body;
+    if (!firestore) return res.status(500).json({ error: "Firestore not initialized" });
 
-    if (!uid || !data) {
-      return res.status(400).json({ error: "Missing uid or data" });
-    }
+    const { uid, data } = req.body;
+    if (!uid || !data) return res.status(400).json({ error: "Missing uid or data" });
 
     await firestore.collection("users").doc(uid).set(data, { merge: true });
-
-    res.json({ success: true });
-
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("update-user error:", err && err.message ? err.message : err);
+    res.status(500).json({ error: "Update failed", details: err.message });
   }
 });
 
-
-// ===========================================================
-// HEALTH CHECK
-// ===========================================================
-app.get("/", (req, res) => {
-  res.send("🚀 PromotionAI Backend Running");
+// -------------------- Optional helper endpoints (usage / tools) --------------------
+// Tools endpoint: redirect to tool action for easier frontend calls
+app.post("/api/tool", async (req, res) => {
+  try {
+    const { tool, text } = req.body;
+    if (!tool || !text) return res.status(400).json({ error: "Missing tool or text" });
+    const prompt = buildToolPrompt(tool, text);
+    const out = await callOpenRouter(prompt, 300);
+    res.json({ output: out });
+  } catch (err) {
+    console.error("Tool error:", err && err.message ? err.message : err);
+    res.status(500).json({ error: "Tool failed", details: err.message });
+  }
 });
 
+// -------------------- Health --------------------
+app.get("/", (req, res) => {
+  res.send("🔥 PromotionAI backend live (AI + Images + Razorpay + Firebase)");
+});
 
-// ===========================================================
-// START SERVER
-// ===========================================================
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🔥 Server running on ${PORT}`));
+// -------------------- Start --------------------
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
