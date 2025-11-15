@@ -1,214 +1,179 @@
-// server.js
-// PromotionAI — Full backend: AI text (tools + templates), image gallery, Razorpay, Firebase Admin (ENV), update-user API
-
+// ✅ PromotionAI - Smart Backend (AI Text + Cloudinary Gallery + Razorpay Payment)
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
 import fs from "fs";
 import dotenv from "dotenv";
 import Razorpay from "razorpay";
-import admin from "firebase-admin";
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "4mb" }));
+app.use(express.json({ limit: "2mb" }));
 
-// -------------------- Config / Env --------------------
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "gpt-4o-mini";
-const GALLERY_PATH = process.env.GALLERY_PATH || new URL("./gallery_manifest.json", import.meta.url).pathname;
-const PORT = process.env.PORT || 5000;
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
+// 🔑 API Keys & Model
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const MODEL = process.env.OPENROUTER_MODEL || "gpt-4o-mini";
+const GALLERY_PATH = new URL("./gallery_manifest.json", import.meta.url).pathname;
 
-// -------------------- Firebase Admin init (from ENV) --------------------
-let firestore = null;
-try {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-    const cfg = typeof process.env.FIREBASE_SERVICE_ACCOUNT_JSON === "string"
-      ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
-      : process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        credential: admin.credential.cert(cfg),
-      });
-      console.log("🔥 Firebase Admin initialized from ENV");
-    }
-    firestore = admin.firestore();
-  } else {
-    console.warn("⚠️ FIREBASE_SERVICE_ACCOUNT_JSON not set — Firestore features will fail until set.");
-  }
-} catch (err) {
-  console.error("❌ Firebase Admin Init Error:", err && err.message ? err.message : err);
-}
-
-// -------------------- Helper: tool prompts --------------------
+// 🧠 Helper: Smart prompt builder for tools
 function buildToolPrompt(tool, text) {
-  switch ((tool || "").toLowerCase()) {
+  switch (tool) {
     case "rephrase":
-      return `Rephrase this marketing copy to be more engaging and concise. Preserve meaning:\n\n${text}`;
+      return `Rephrase this marketing text in a catchy, professional tone:\n\n${text}`;
     case "translate_hinglish":
-      return `Translate the following into Hinglish (Hindi in Latin script) while keeping meaning and tone:\n\n${text}`;
+      return `Translate this English marketing text into Hinglish (Hindi words in Latin script):\n\n${text}`;
     case "hashtags":
-      return `Extract up to 10 short relevant marketing hashtags (comma separated, no #) from:\n\n${text}`;
+      return `Extract 10 short, relevant marketing hashtags (without # symbol) from this text:\n\n${text}\n\nReturn them comma-separated.`;
     case "shorten":
-      return `Shorten this content to a social media caption <= 25 words:\n\n${text}`;
-    case "expand":
-      return `Expand this marketing text with details and benefits. Keep it persuasive:\n\n${text}`;
+      return `Shorten this content to a catchy caption of max 25 words:\n\n${text}`;
     default:
-      return text;
+      return `Perform this quick marketing task: ${tool}\n\n${text}`;
   }
 }
 
-// -------------------- Utility: call OpenRouter --------------------
-async function callOpenRouter(finalPrompt, maxTokens = 600) {
-  if (!OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY not configured");
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: OPENROUTER_MODEL,
-      messages: [{ role: "user", content: finalPrompt }],
-      max_tokens: maxTokens,
-    }),
-  });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`OpenRouter error: ${res.status} ${txt}`);
-  }
-  const json = await res.json();
-  const output = json?.choices?.[0]?.message?.content;
-  return output || "";
-}
-
-// -------------------- API: main prompt (templates + tools) --------------------
+// ✍️ TEXT GENERATION API (OpenRouter)
 app.post("/api/prompt", async (req, res) => {
-  try {
-    const { prompt, tool, template, tone, length, businessType, creativity, action } = req.body;
-    if (!prompt && !tool) return res.status(400).json({ error: "Missing prompt" });
+  const { prompt, tone, length, businessType, template, creativity, action, tool } = req.body;
 
-    // tool mode — quick tasks (hashtags, rephrase, shorten, translate_hinglish, expand)
-    if (action === "tool" || tool) {
-      const tp = buildToolPrompt(tool, prompt);
-      const maxTokens = 250;
-      const out = await callOpenRouter(tp, maxTokens);
-      return res.json({ output: out });
-    }
+  if (!prompt) return res.status(400).json({ error: "Missing prompt" });
 
-    // full template mode
-    const finalPrompt = `
+  let finalPrompt = "";
+  let maxTokens = 600;
+
+  if (action === "tool" || template === "tool" || tool) {
+    finalPrompt = buildToolPrompt(tool || "general", prompt);
+    maxTokens = 250;
+  } else {
+    finalPrompt = `
 🎯 Template: ${template || "Custom"}
 🏢 Business Type: ${businessType || "General"}
 💬 Tone: ${tone || "Casual"}
 📏 Length: ${length || "Medium"}
 🌈 Creativity: ${creativity || 70}%
-🧠 User Prompt:
-${prompt}
+🧠 User Prompt: ${prompt}
 
-➡️ Generate creative, brand-relevant marketing content. Provide short caption, 3 hashtags (with #), and a longer description. Keep output readable and separated with headings.
+➡️ Generate creative, brand-relevant, and engaging marketing content based on the details above.
 `;
-    const out = await callOpenRouter(finalPrompt, 800);
-    res.json({ output: out });
-  } catch (err) {
-    console.error("Prompt error:", err && err.message ? err.message : err);
-    res.status(500).json({ error: "Prompt failed", details: err.message });
+  }
+
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [{ role: "user", content: finalPrompt }],
+        max_tokens: maxTokens,
+      }),
+    });
+
+    const data = await response.json();
+    const output = data?.choices?.[0]?.message?.content?.trim() || "No output received from AI.";
+    res.json({ output });
+  } catch (error) {
+    console.error("AI Error:", error.message);
+    res.status(500).json({ error: "AI request failed", details: error.message });
   }
 });
 
-// -------------------- API: image (gallery fallback) --------------------
+// 🖼️ CLOUDINARY IMAGE API (Gallery Based)
 app.post("/api/image", async (req, res) => {
-  try {
-    const { prompt, template } = req.body;
-    if (!prompt) return res.status(400).json({ error: "No prompt" });
+  const { prompt, template } = req.body;
+  if (!prompt) return res.status(400).send("No image prompt provided.");
 
-    // try to return images from gallery_manifest.json if present
-    try {
-      const raw = fs.readFileSync(GALLERY_PATH, "utf-8");
-      const gallery = JSON.parse(raw || "{}");
-      const cat = (template || "general").toLowerCase();
-      const arr = gallery[cat] || gallery["general"] || [];
-      if (arr.length > 0) {
-        const chosen = arr[Math.floor(Math.random() * arr.length)];
-        return res.json({ images: [chosen], source: "gallery" });
-      }
-    } catch (e) {
-      // ignore: use placeholder fallback
+  try {
+    const galleryData = JSON.parse(fs.readFileSync(GALLERY_PATH, "utf-8"));
+    const category = (template || "general").toLowerCase();
+    const images = galleryData[category] || galleryData["general"] || [];
+
+    if (images.length > 0) {
+      const randomImage = images[Math.floor(Math.random() * images.length)];
+      return res.json({ images: [randomImage], source: "cloudinary", template: category });
+    } else {
+      return res.json({
+        images: [`https://placehold.co/512x512?text=${encodeURIComponent(prompt)}`],
+        source: "placeholder",
+      });
     }
-
-    // fallback: placeholder image service
-    const placeholder = `https://placehold.co/1024x1024?text=${encodeURIComponent(prompt)}`;
-    res.json({ images: [placeholder], source: "placeholder" });
   } catch (err) {
-    console.error("Image API error:", err && err.message ? err.message : err);
-    res.status(500).json({ error: "Image failed", details: err.message });
+    console.error("Gallery error:", err.message);
+    return res.json({
+      images: [`https://placehold.co/512x512?text=${encodeURIComponent(prompt)}`],
+      source: "fallback",
+    });
   }
 });
 
-// -------------------- Razorpay: create order --------------------
+// 💰 RAZORPAY PAYMENT INTEGRATION
 const razorpay = new Razorpay({
-  key_id: RAZORPAY_KEY_ID,
-  key_secret: RAZORPAY_KEY_SECRET,
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
+// ✅ Create Order API (for frontend)
 app.post("/api/create-order", async (req, res) => {
+  const options = {
+    amount: 9900, // ₹99 = 99 INR * 100
+    currency: "INR",
+    receipt: `order_rcptid_${Date.now()}`,
+  };
+
   try {
-    const { amount } = req.body; // amount in paise recommended
-    const opts = {
-      amount: amount || 100,
-      currency: "INR",
-      receipt: `order_rcptid_${Date.now()}`,
-    };
-    const order = await razorpay.orders.create(opts);
-    res.json(order);
-  } catch (err) {
-    console.error("Razorpay create order error:", err && err.message ? err.message : err);
-    res.status(500).json({ error: "Order creation failed", details: err.message });
+    const order = await razorpay.orders.create(options);
+    console.log("✅ Razorpay order created:", order.id);
+    res.status(200).json(order);
+  } catch (error) {
+    console.error("❌ Razorpay order creation failed:", error.message);
+    res.status(500).json({ error: "Order creation failed", details: error.message });
   }
 });
 
-// -------------------- Firebase: update-user API --------------------
-app.post("/api/update-user", async (req, res) => {
-  try {
-    if (!firestore) return res.status(500).json({ error: "Firestore not initialized" });
-
-    const { uid, data } = req.body;
-    if (!uid || !data) return res.status(400).json({ error: "Missing uid or data" });
-
-    await firestore.collection("users").doc(uid).set(data, { merge: true });
-    return res.json({ success: true });
-  } catch (err) {
-    console.error("update-user error:", err && err.message ? err.message : err);
-    res.status(500).json({ error: "Update failed", details: err.message });
-  }
-});
-
-// -------------------- Optional helper endpoints (usage / tools) --------------------
-// Tools endpoint: redirect to tool action for easier frontend calls
-app.post("/api/tool", async (req, res) => {
-  try {
-    const { tool, text } = req.body;
-    if (!tool || !text) return res.status(400).json({ error: "Missing tool or text" });
-    const prompt = buildToolPrompt(tool, text);
-    const out = await callOpenRouter(prompt, 300);
-    res.json({ output: out });
-  } catch (err) {
-    console.error("Tool error:", err && err.message ? err.message : err);
-    res.status(500).json({ error: "Tool failed", details: err.message });
-  }
-});
-
-// -------------------- Health --------------------
+// 🩺 Health Check Route (For Render test)
 app.get("/", (req, res) => {
-  res.send("🔥 PromotionAI backend live (AI + Images + Razorpay + Firebase)");
+  res.send("✅ PromotionAI backend is live and running perfectly!");
 });
 
-// -------------------- Start --------------------
+
+app.post("/api/payment-success", async (req, res) => {
+  const { userId } = req.body;
+
+  const userSnap = await db.ref("users/" + userId).once("value");
+  const user = userSnap.val();
+
+  // अगर user referral के साथ आया है
+  if (user.referredBy) {
+    const referrer = user.referredBy;
+
+    const refSnap = await db.ref("users/" + referrer).once("value");
+    const refData = refSnap.val();
+
+    const currentReward = refData.reward || 0;
+
+    // Reward Add
+    await db.ref("users/" + referrer).update({
+      reward: currentReward + 10
+    });
+
+    // Referral history save
+    await db.ref("referrals").push({
+      referrer,
+      buyer: userId,
+      amount: 10,
+      date: Date.now()
+    });
+  }
+
+  res.json({ success: true });
+});
+
+
+// 🚀 START SERVER (PORT 5000)
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`✅ PromotionAI backend running at http://localhost:${PORT}`);
 });
