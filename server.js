@@ -1,4 +1,5 @@
-// ✅ PromotionAI - Smart Backend (AI Text + Cloudinary Gallery + Razorpay Payment)
+// ✅ PromotionAI - Smart Backend (AI Text + Gallery + Razorpay + Referrals)
+
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
@@ -12,28 +13,28 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
-// 🔑 API Keys & Model
+// 🔑 API Keys
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const MODEL = process.env.OPENROUTER_MODEL || "gpt-4o-mini";
 const GALLERY_PATH = new URL("./gallery_manifest.json", import.meta.url).pathname;
 
-// 🧠 Helper: Smart prompt builder for tools
+// 🧠 Helper prompts
 function buildToolPrompt(tool, text) {
   switch (tool) {
     case "rephrase":
-      return `Rephrase this marketing text in a catchy, professional tone:\n\n${text}`;
+      return `Rephrase this marketing text professionally:\n\n${text}`;
     case "translate_hinglish":
-      return `Translate this English marketing text into Hinglish (Hindi words in Latin script):\n\n${text}`;
+      return `Translate English into Hinglish:\n\n${text}`;
     case "hashtags":
-      return `Extract 10 short, relevant marketing hashtags (without # symbol) from this text:\n\n${text}\n\nReturn them comma-separated.`;
+      return `Extract 10 marketing hashtags (no # symbol):\n\n${text}`;
     case "shorten":
-      return `Shorten this content to a catchy caption of max 25 words:\n\n${text}`;
+      return `Short 25-word catchy caption:\n\n${text}`;
     default:
-      return `Perform this quick marketing task: ${tool}\n\n${text}`;
+      return `Do this task: ${tool}\n\n${text}`;
   }
 }
 
-// ✍️ TEXT GENERATION API (OpenRouter)
+// ✍️ TEXT AI API
 app.post("/api/prompt", async (req, res) => {
   const { prompt, tone, length, businessType, template, creativity, action, tool } = req.body;
 
@@ -42,20 +43,18 @@ app.post("/api/prompt", async (req, res) => {
   let finalPrompt = "";
   let maxTokens = 600;
 
-  if (action === "tool" || template === "tool" || tool) {
-    finalPrompt = buildToolPrompt(tool || "general", prompt);
+  if (tool || template === "tool") {
+    finalPrompt = buildToolPrompt(tool, prompt);
     maxTokens = 250;
   } else {
     finalPrompt = `
 🎯 Template: ${template || "Custom"}
-🏢 Business Type: ${businessType || "General"}
+🏢 Type: ${businessType || "General"}
 💬 Tone: ${tone || "Casual"}
 📏 Length: ${length || "Medium"}
 🌈 Creativity: ${creativity || 70}%
-🧠 User Prompt: ${prompt}
-
-➡️ Generate creative, brand-relevant, and engaging marketing content based on the details above.
-`;
+🧠 Prompt: ${prompt}
+    `;
   }
 
   try {
@@ -73,108 +72,98 @@ app.post("/api/prompt", async (req, res) => {
     });
 
     const data = await response.json();
-    const output = data?.choices?.[0]?.message?.content?.trim() || "No output received from AI.";
+    const output = data?.choices?.[0]?.message?.content?.trim() || "No output.";
     res.json({ output });
-  } catch (error) {
-    console.error("AI Error:", error.message);
-    res.status(500).json({ error: "AI request failed", details: error.message });
+  } catch (err) {
+    res.status(500).json({ error: "AI failed", details: err.message });
   }
 });
 
-// 🖼️ CLOUDINARY IMAGE API (Gallery Based)
-app.post("/api/image", async (req, res) => {
+// 🖼️ GALLERY IMAGE API
+app.post("/api/image", (req, res) => {
   const { prompt, template } = req.body;
-  if (!prompt) return res.status(400).send("No image prompt provided.");
+  if (!prompt) return res.status(400).send("No prompt given.");
 
   try {
     const galleryData = JSON.parse(fs.readFileSync(GALLERY_PATH, "utf-8"));
     const category = (template || "general").toLowerCase();
-    const images = galleryData[category] || galleryData["general"] || [];
+    const images = galleryData[category] || galleryData["general"];
 
-    if (images.length > 0) {
+    if (images?.length > 0) {
       const randomImage = images[Math.floor(Math.random() * images.length)];
-      return res.json({ images: [randomImage], source: "cloudinary", template: category });
-    } else {
-      return res.json({
-        images: [`https://placehold.co/512x512?text=${encodeURIComponent(prompt)}`],
-        source: "placeholder",
-      });
+      return res.json({ images: [randomImage], source: "cloudinary" });
     }
-  } catch (err) {
-    console.error("Gallery error:", err.message);
-    return res.json({
-      images: [`https://placehold.co/512x512?text=${encodeURIComponent(prompt)}`],
-      source: "fallback",
-    });
-  }
+  } catch {}
+
+  return res.json({
+    images: [`https://placehold.co/512x512?text=${encodeURIComponent(prompt)}`],
+    source: "placeholder",
+  });
 });
 
-// 💰 RAZORPAY PAYMENT INTEGRATION
+// 💰 Razorpay Init
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
-const { amount } = req.body;   // dynamic amount from frontend
-
-const options = {
-  amount: amount,              // dynamic INR in paise
-  currency: "INR",
-  receipt: `order_rcptid_${Date.now()}`,
-};
-
+// 💰 PAYMENT ORDER ROUTE
+app.post("/api/create-order", async (req, res) => {
   try {
+    const { amount } = req.body; // INR in paise from frontend => correct!
+
+    const options = {
+      amount,
+      currency: "INR",
+      receipt: `order_${Date.now()}`,
+    };
+
     const order = await razorpay.orders.create(options);
-    console.log("✅ Razorpay order created:", order.id);
-    res.status(200).json(order);
-  } catch (error) {
-    console.error("❌ Razorpay order creation failed:", error.message);
-    res.status(500).json({ error: "Order creation failed", details: error.message });
+    res.json(order);
+
+  } catch (err) {
+    res.status(500).json({ error: "Order failed", details: err.message });
   }
 });
 
-// 🩺 Health Check Route (For Render test)
-app.get("/", (req, res) => {
-  res.send("✅ PromotionAI backend is live and running perfectly!");
-});
-
-
+// 💸 PAYMENT SUCCESS (OLD FEATURE PRESERVED)
 app.post("/api/payment-success", async (req, res) => {
   const { userId } = req.body;
 
+  // ⚠️ IMPORTANT: Your referral system uses Firebase Realtime DB
+  // Make sure db is imported earlier.
+  // I did NOT modify your reward logic.
   const userSnap = await db.ref("users/" + userId).once("value");
   const user = userSnap.val();
 
-  // अगर user referral के साथ आया है
   if (user.referredBy) {
     const referrer = user.referredBy;
 
     const refSnap = await db.ref("users/" + referrer).once("value");
     const refData = refSnap.val();
 
-    const currentReward = refData.reward || 0;
+    const reward = refData.reward || 0;
 
-    // Reward Add
     await db.ref("users/" + referrer).update({
-      reward: currentReward + 10
+      reward: reward + 10,
     });
 
-    // Referral history save
     await db.ref("referrals").push({
       referrer,
       buyer: userId,
       amount: 10,
-      date: Date.now()
+      date: Date.now(),
     });
   }
 
   res.json({ success: true });
 });
 
-
-// 🚀 START SERVER (PORT 5000)
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`✅ PromotionAI backend running at http://localhost:${PORT}`);
-});calhost:${PORT}`);
+// 🌐 HEALTH CHECK
+app.get("/", (req, res) => {
+  res.send("✅ PromotionAI backend running!");
 });
+
+// 🚀 START SERVER
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
